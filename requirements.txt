@@ -1,0 +1,17 @@
+# Streamlit for the front-end app
+streamlit==1.21.0
+# FastAPI for the backend API
+fastapi>=0.70
+
+# Uvicorn with standard extras for serving FastAPI (includes websockets support)
+uvicorn[standard]>=0.17
+
+# Requests for making HTTP calls
+requests>=2.25
+beautifulsoup4
+pandas
+numpy==1.24.3
+nibabel
+pydicom
+# dcm2bids installed from GitHub (adjust the version/tag as needed)
+dcm2bids @ git+https://github.com/UNFmontreal/Dcm2Bids.git@3.2.0#egg=dcm2bids

@@ -1,1 +1,1 @@
-# Haske-MRIQC
+# WebQC
