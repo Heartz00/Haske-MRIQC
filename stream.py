@@ -18,8 +18,6 @@ import uuid
 
 app = FastAPI()
 
-
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://haske.online:5000", "https://www.haske.online"],
@@ -29,70 +27,92 @@ app.add_middleware(
 )
 
 # ------------------------------
-# Streamlit Page Configuration & Branding
+# Streamlit Page Configuration
 # ------------------------------
 st.set_page_config(page_title="MRIQC App", layout="wide")
 
-st.markdown("""
-# MRIQC Web App for MRI Image Quality Assessment
-supported by Haske
-The Web-MRIQC App provides an intuitive web interface for running Quality Control on MRI datasets acquired in DICOM formats. The App offers users the ability to compute Image Quality Metrics (IQMs) for neuroimaging studies.
-This web-based solution implements the original MRIQC standalone application in a user-friendly interface accessible from any device, without the need for software installation or access to resource-intensive computers. Thus, simplifying the quality control workflow. For a comprehensive understanding of the IQMs computed by MRIQC, as well as details on the original MRIQC implementation, refer to the official MRIQC documentation: https://mriqc.readthedocs.io.
-""",
-            unsafe_allow_html=True
-            )
+# ------------------------------
+# Sidebar with Collapsible Information
+# ------------------------------
+with st.sidebar:
+    st.image("MLAB.png", width=200)  # Adjust path as needed
+    st.markdown("### MRIQC Web App")
+    
+    # Collapsible section for app information
+    with st.expander("ℹ️ About this App"):
+        st.markdown("""
+        The Web-MRIQC App provides an intuitive web interface for running Quality Control on MRI datasets acquired in DICOM formats. The App offers users the ability to compute Image Quality Metrics (IQMs) for neuroimaging studies.
+        
+        This web-based solution implements the original MRIQC standalone application in a user-friendly interface accessible from any device, without the need for software installation or access to resource-intensive computers. Thus, simplifying the quality control workflow. For a comprehensive understanding of the IQMs computed by MRIQC, as well as details on the original MRIQC implementation, refer to the official MRIQC documentation: [MRIQC Documentation](https://mriqc.readthedocs.io).
+        """)
+    
+    # Collapsible section for usage instructions
+    with st.expander("📖 How to Use"):
+        st.markdown("""
+        1. Enter Subject ID (optional)
+        2. Enter the Session ID (optional, e.g, baseline, follow up, etc)
+        3. Select your preferred modality for analysis (T1w, T2w, DWI, BOLD fMRI, or ASL)
+        4. Upload a zipped file/folder containing T1w, T2w, DWI, BOLD fMRI, or ASL DICOM images
+        5. Click DICOM → BIDS Conversion
+        6. Once BIDS converted, you will see the notification: DICOM to BIDS conversion complete
+        7. Click Send BIDS to Web for MRIQC or if you want the BIDS format, Click Download BIDS Dataset to your device.
+        8. Send the converted BIDS images to MRIQC by clicking Send BIDS to Web for MRIQC for generating the IQMs
+        9. Depending on your internet connection, this can between 5-10 minutes to get your results for a single participant.
+        10. When completed, you can view the report on the web App or download the report of the IQM by clicking the "Download MRIQC results" button including the csv export.
+        """)
+    
+    # Collapsible section for references
+    with st.expander("📚 References"):
+        st.markdown("""
+        1. Boré, A., Guay, S., Bedetti, C., Meisler, S., & GuenTher, N. (2023). Dcm2Bids (Version 3.1.1) [Computer software]. https://doi.org/10.5281/zenodo.8436509
+        2. Li X, Morgan PS, Ashburner J, Smith J, Rorden C. The first step for neuroimaging data analysis: DICOM to NIfTI conversion. J Neurosci Methods., 2016, 264:47-56.
+        3. Esteban O, Birman D, Schaer M, Koyejo OO, Poldrack RA, Gorgolewski KJ (2017) MRIQC: Advancing the automatic prediction of image quality in MRI from unseen sites. PLoS ONE 12(9): e0184661. https://doi.org/10.1371/journal.pone.0184661
+        """)
+    
+    # Collapsible section for IQM tables
+    with st.expander("📊 IQM Definitions"):
+        st.markdown("""
+        ### **Anatomical (T1w / T2w) IQMs**
+        | Abbreviation | Name                                 | Description                                                                                                                                    |
+        |--------------|--------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
+        | **CNR**      | Contrast-to-Noise Ratio              | Measures how well different tissues (like gray matter and white matter) are distinguished. Higher CNR indicates better tissue contrast.        |
+        | **SNR**      | Signal-to-Noise Ratio                | Assesses the strength of the signal relative to background noise. Higher SNR means clearer images.                                             |
+        | **EFC**      | Entropy Focus Criterion              | Quantifies image sharpness using Shannon entropy. Higher EFC indicates more ghosting/blurring (i.e., less sharp).                              |
+        | **FBER**     | Foreground-Background Energy Ratio   | Compares energy inside the brain mask vs outside. Higher FBER reflects better tissue delineation.                                              |
+        | **FWHM**     | Full Width at Half Maximum           | Estimates the smoothness in spatial resolution. Lower FWHM typically implies sharper images (depends on scanner/protocol).                     |
+        | **INU**      | Intensity Non-Uniformity             | Evaluates bias fields caused by scanner imperfections. Higher INU suggests more uneven signal across the image.                                |
+        | **Art_QI1**  | Quality Index 1                      | Measures artifacts in areas outside the brain. Higher QI1 = more artifacts (e.g., motion, ghosting).                                           |
+        | **Art_QI2**  | Quality Index 2                      | Detects structured noise using a chi-squared goodness-of-fit test. Higher QI2 indicates potential issues with signal consistency.              |
+        | **WM2MAX**   | White Matter to Max Intensity Ratio  | Checks if white matter intensity is within a normal range. Very high or low values may indicate problems with normalization or acquisition.    |
 
-st.markdown(
-    """
-## How to Use:
-The app enables users to upload T1w, T2w, DWI, BOLD fMRI, or ASL DICOM files as a folder or zipped format, convert them to the Standard Brain Imaging Data Structure (BIDS) format using dcm2bids [1] via dcm2niiX [2], and then process the IQMs using MRIQC [3]. The resulting reports can be downloaded for further analysis. To use, follow the following steps:
+        ### **Functional (BOLD MRI) IQMs**
+        | Abbreviation | Name                               | Description                                                                                                                    |
+        |--------------|------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+        | **FD**       | Framewise Displacement             | Quantifies subject head movement across volumes. Higher FD = more motion artifacts. Mean FD < 0.2 mm is often acceptable.     |
+        | **DVARS**    | D Temporal Variance of Signal      | Measures the change in signal between consecutive volumes. Spikes in DVARS can indicate motion or noise events.               |
+        | **tSNR**     | Temporal Signal-to-Noise Ratio     | Assesses the SNR over time (mean / std of the time series per voxel). Higher tSNR = more reliable signal over time.           |
+        | **GCOR**     | Global Correlation                 | Detects global signal fluctuations across the brain. Elevated GCOR may reflect widespread noise.                              |
+        | **AOR**      | AFNI Outlier Ratio                 | Counts the number of voxels flagged as statistical outliers. High AOR suggests poor scan quality or significant motion issues. |
+        | **GSR**      | Global Signal Regression Impact    | Assesses how removing global signal changes BOLD contrast. Large differences might affect downstream analysis.                |
 
-1. Enter Subject ID (optional)
-2. Enter the Session ID (optional, e.g, baseline, follow up, etc)
-3. Select your preferred modality for analysis (T1w, T2w, DWI, BOLD fMRI, or ASL)
-4. Upload a zipped file/folder containing T1w, T2w, DWI, BOLD fMRI, or ASL DICOM images by dragging and dropping the zipped file or uploading using the browse file option
-5. Click DICOM → BIDS Conversion
-6. Once BIDS converted, you will see the notification: DICOM to BIDS conversion complete
-7. Click Send BIDS to Web for MRIQC or if you want the BIDS format, Click Download BIDS Dataset to your device.
-8. Send the converted BIDS images to MRIQC by clicking Send BIDS to Web for MRIQC  for generating the IQMs
-9. Depending on your internet connection, this can between 5-10 minutes to get your results for a single participant.
-10. When completed, you can view the report on the web App or download the report of the IQM by clicking the "Download MRIQC results" button including the csv export.
+        *For deeper technical explanations, see the [MRIQC Documentation](https://mriqc.readthedocs.io/en/latest/iqms/iqms.html).*
+        """)
+    
+    st.markdown("---")
+    st.markdown("""
+    **Medical Artificial Intelligence Lab**  
+    Contact: info@mailab.io  
+    © 2025 All Rights Reserved
+    """)
 
-## References
-1. Boré, A., Guay, S., Bedetti, C., Meisler, S., & GuenTher, N. (2023). Dcm2Bids (Version 3.1.1) [Computer software]. https://doi.org/10.5281/zenodo.8436509
-2. Li X, Morgan PS, Ashburner J, Smith J, Rorden C. The first step for neuroimaging data analysis: DICOM to NIfTI conversion. J Neurosci Methods., 2016, 264:47-56.
-3. Esteban O, Birman D, Schaer M, Koyejo OO, Poldrack RA, Gorgolewski KJ (2017) MRIQC: Advancing the automatic prediction of image quality in MRI from unseen sites. PLoS ONE 12(9): e0184661. https://doi.org/10.1371/journal.pone.0184661
-""", unsafe_allow_html=True)
+# ------------------------------
+# Main App Content
+# ------------------------------
+st.title("MRIQC Web App for MRI Image Quality Assessment")
+st.caption("Supported by Haske")
 
-# Display IQM tables in Markdown
-st.markdown("""
-### **Anatomical (T1w / T2w) IQMs**
-
-| Abbreviation | Name                                 | Description                                                                                                                                    |
-|--------------|--------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
-| **CNR**      | Contrast-to-Noise Ratio              | Measures how well different tissues (like gray matter and white matter) are distinguished. Higher CNR indicates better tissue contrast.        |
-| **SNR**      | Signal-to-Noise Ratio                | Assesses the strength of the signal relative to background noise. Higher SNR means clearer images.                                             |
-| **EFC**      | Entropy Focus Criterion              | Quantifies image sharpness using Shannon entropy. Higher EFC indicates more ghosting/blurring (i.e., less sharp).                              |
-| **FBER**     | Foreground-Background Energy Ratio   | Compares energy inside the brain mask vs outside. Higher FBER reflects better tissue delineation.                                              |
-| **FWHM**     | Full Width at Half Maximum           | Estimates the smoothness in spatial resolution. Lower FWHM typically implies sharper images (depends on scanner/protocol).                     |
-| **INU**      | Intensity Non-Uniformity             | Evaluates bias fields caused by scanner imperfections. Higher INU suggests more uneven signal across the image.                                |
-| **Art_QI1**  | Quality Index 1                      | Measures artifacts in areas outside the brain. Higher QI1 = more artifacts (e.g., motion, ghosting).                                           |
-| **Art_QI2**  | Quality Index 2                      | Detects structured noise using a chi-squared goodness-of-fit test. Higher QI2 indicates potential issues with signal consistency.              |
-| **WM2MAX**   | White Matter to Max Intensity Ratio  | Checks if white matter intensity is within a normal range. Very high or low values may indicate problems with normalization or acquisition.    |
-
-### **Functional (BOLD MRI) IQMs**
-
-| Abbreviation | Name                               | Description                                                                                                                    |
-|--------------|------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
-| **FD**       | Framewise Displacement             | Quantifies subject head movement across volumes. Higher FD = more motion artifacts. Mean FD < 0.2 mm is often acceptable.     |
-| **DVARS**    | D Temporal Variance of Signal      | Measures the change in signal between consecutive volumes. Spikes in DVARS can indicate motion or noise events.               |
-| **tSNR**     | Temporal Signal-to-Noise Ratio     | Assesses the SNR over time (mean / std of the time series per voxel). Higher tSNR = more reliable signal over time.           |
-| **GCOR**     | Global Correlation                 | Detects global signal fluctuations across the brain. Elevated GCOR may reflect widespread noise.                              |
-| **AOR**      | AFNI Outlier Ratio                 | Counts the number of voxels flagged as statistical outliers. High AOR suggests poor scan quality or significant motion issues. |
-| **GSR**      | Global Signal Regression Impact    | Assesses how removing global signal changes BOLD contrast. Large differences might affect downstream analysis.                |
-
-*For deeper technical explanations, see the [MRIQC Documentation](https://mriqc.readthedocs.io/en/latest/iqms/iqms.html).*
-""")
+# [Rest of your original code remains the same from the helper functions section onward...]
+# Just remove the footer section at the end since we've moved it to the sidebar
 
 # ------------------------------
 # Helper Functions
@@ -696,62 +716,6 @@ def main():
                     st.warning(
                         "⚠️ MRIQC processing timed out after 20 minutes.")
 
-
-# ------------------------------
-# Footer and Branding
-# ------------------------------
-
-
-# Container with collective padding
-st.markdown("""
-    <div style="padding: 100px;">
-""", unsafe_allow_html=True)
-
-# Adjust column widths to center contents
-col1, col2 = st.columns([1, 3])
-
-with col1:
-    st.image("MLAB.png", width=250)
-
-with col2:
-    st.markdown(
-        "<h2 style='padding-top: 40px;'>Medical Artificial Intelligence Lab</h2>",
-        unsafe_allow_html=True
-    )
-
-# Close container div
-st.markdown("</div>", unsafe_allow_html=True)
-
-st.markdown(
-    """
-    <style>
-    /* Hide Streamlit's default footer */
-    footer { visibility: hidden; }
-    /* Custom footer styling */
-    .custom-footer {
-        position: fixed;
-        left: 0;
-        bottom: 0;
-        width: 100%;
-        background-color: #f9f9f9;
-        text-align: center;
-        padding: 10px 0;
-        border-top: 1px solid #e0e0e0;
-        font-size: 14px;
-        color: #333;
-    }
-    .custom-footer img {
-        height: 40px;
-        vertical-align: middle;
-        margin-right: 10px;
-    }
-    </style>
-    <div class="custom-footer">
-        <strong>Medical Artificial Intelligence Lab || Contact Email: info@mailab.io </strong> – © 2025 All Rights Reserved
-    </div>
-    """,
-    unsafe_allow_html=True
-)
 
 if __name__ == "__main__":
     main()
