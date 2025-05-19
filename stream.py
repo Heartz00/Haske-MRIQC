@@ -446,31 +446,45 @@ def extract_all_iqms(result_dir: Path):
 # ------------------------------
 def main():
     st.title("DICOM → BIDS → MRIQC")
-
+    
     # Check for session ID in URL params
     session_id = st.experimental_get_query_params().get("session", [None])[0]
+    
     if session_id and session_id in UPLOAD_CACHE:
         file_path = UPLOAD_CACHE.pop(session_id)
+        # Auto-load the file into your processing pipeline
         with open(file_path, "rb") as f:
             st.session_state.dicom_zip = f
             st.success("DICOM data loaded successfully!")
 
-    # Inputs
     subj_id = st.text_input("Subject ID (e.g. '01')", value="01")
     ses_id = st.text_input("Session ID (optional)", value="Baseline")
 
     selected_modalities = st.multiselect(
-        "Select MRIQC modalities:", ["T1w", "T2w", "bold"], default=["T1w"]
+        "Select MRIQC modalities:",
+        ["T1w", "T2w", "bold"],
+        default=["T1w"]
     )
 
+    # Resource allocation settings
     col1, col2 = st.columns(2)
     with col1:
-        n_procs = st.selectbox("CPU Cores to Use", options=[4, 8, 12, 16], index=3)
+        n_procs = st.selectbox(
+            "CPU Cores to Use",
+            options=[4, 8, 12, 16],
+            index=3,  # Default to 16
+            help="More cores = faster processing but higher resource usage"
+        )
     with col2:
-        mem_gb = st.selectbox("Memory Allocation (GB)", options=[16, 32, 48, 64], index=3)
+        mem_gb = st.selectbox(
+            "Memory Allocation (GB)",
+            options=[16, 32, 48, 64],
+            index=3,  # Default to 64
+            help="More memory allows processing larger datasets"
+        )
 
     API_BASE = "http://52.91.185.103:8000"
-    dicom_zip = st.file_uploader("Upload DICOM ZIP", type=["zip"])
+    ws_url = "ws://52.91.185.103:8000/ws/mriqc"
 
     dicom_zip = st.file_uploader("Upload DICOM ZIP", type=["zip"])
 
