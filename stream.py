@@ -12,6 +12,10 @@ import json
 import datetime
 import time
 from io import BytesIO
+from fastapi import FastAPI, UploadFile, File
+import uuid
+
+app = FastAPI()
 # ------------------------------
 # Streamlit Page Configuration & Branding
 # ------------------------------
@@ -82,7 +86,23 @@ st.markdown("""
 # Helper Functions
 # ------------------------------
 
+# Temporary storage for uploaded files
+UPLOAD_CACHE = {}
 
+@app.post("/api/receive-dicom")
+async def receive_dicom(dicom_zip: UploadFile = File(...)):
+    session_id = str(uuid.uuid4())
+    file_path = f"temp_uploads/{session_id}.zip"
+    
+    # Save the file temporarily
+    with open(file_path, "wb") as f:
+        f.write(await dicom_zip.read())
+    
+    # Store in memory cache
+    UPLOAD_CACHE[session_id] = file_path
+    
+    return {"session_id": session_id}
+            
 def generate_dcm2bids_config(temp_dir: Path) -> Path:
     config = {
         "descriptions": [
@@ -424,39 +444,33 @@ def extract_all_iqms(result_dir: Path):
 # ------------------------------
 # Main Streamlit App
 # ------------------------------
-
-
 def main():
     st.title("DICOM → BIDS → MRIQC")
 
+    # Check for session ID in URL params
+    session_id = st.experimental_get_query_params().get("session", [None])[0]
+    if session_id and session_id in UPLOAD_CACHE:
+        file_path = UPLOAD_CACHE.pop(session_id)
+        with open(file_path, "rb") as f:
+            st.session_state.dicom_zip = f
+            st.success("DICOM data loaded successfully!")
+
+    # Inputs
     subj_id = st.text_input("Subject ID (e.g. '01')", value="01")
     ses_id = st.text_input("Session ID (optional)", value="Baseline")
 
     selected_modalities = st.multiselect(
-        "Select MRIQC modalities:",
-        ["T1w", "T2w", "bold"],
-        default=["T1w"]
+        "Select MRIQC modalities:", ["T1w", "T2w", "bold"], default=["T1w"]
     )
 
-    # Resource allocation settings
     col1, col2 = st.columns(2)
     with col1:
-        n_procs = st.selectbox(
-            "CPU Cores to Use",
-            options=[4, 8, 12, 16],
-            index=3,  # Default to 16
-            help="More cores = faster processing but higher resource usage"
-        )
+        n_procs = st.selectbox("CPU Cores to Use", options=[4, 8, 12, 16], index=3)
     with col2:
-        mem_gb = st.selectbox(
-            "Memory Allocation (GB)",
-            options=[16, 32, 48, 64],
-            index=3,  # Default to 64
-            help="More memory allows processing larger datasets"
-        )
+        mem_gb = st.selectbox("Memory Allocation (GB)", options=[16, 32, 48, 64], index=3)
 
     API_BASE = "http://52.91.185.103:8000"
-    ws_url = "ws://52.91.185.103:8000/ws/mriqc"
+    dicom_zip = st.file_uploader("Upload DICOM ZIP", type=["zip"])
 
     dicom_zip = st.file_uploader("Upload DICOM ZIP", type=["zip"])
 
