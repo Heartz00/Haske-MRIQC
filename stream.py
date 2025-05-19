@@ -24,7 +24,6 @@ st.set_page_config(page_title="MRIQC App", layout="wide")
 st.markdown("""
 # MRIQC Web App for MRI Image Quality Assessment
 supported by Haske
-
 The Web-MRIQC App provides an intuitive web interface for running Quality Control on MRI datasets acquired in DICOM formats. The App offers users the ability to compute Image Quality Metrics (IQMs) for neuroimaging studies.
 This web-based solution implements the original MRIQC standalone application in a user-friendly interface accessible from any device, without the need for software installation or access to resource-intensive computers. Thus, simplifying the quality control workflow. For a comprehensive understanding of the IQMs computed by MRIQC, as well as details on the original MRIQC implementation, refer to the official MRIQC documentation: https://mriqc.readthedocs.io.
 """,
@@ -448,8 +447,8 @@ def extract_all_iqms(result_dir: Path):
 def main():
     st.title("DICOM → BIDS → MRIQC")
     
-    # Check for session ID in URL params st.query_params
-    session_id = st.experimental_get_query_params().get("session", [None])[0]
+    # Updated to use st.query_params instead of st.experimental_get_query_params
+    session_id = st.query_params.get("session", [None])[0]
     
     if session_id and session_id in UPLOAD_CACHE:
         file_path = UPLOAD_CACHE.pop(session_id)
