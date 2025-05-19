@@ -13,9 +13,21 @@ import datetime
 import time
 from io import BytesIO
 from fastapi import FastAPI, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 import uuid
 
 app = FastAPI()
+
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://haske.online:5000", "https://www.haske.online"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # ------------------------------
 # Streamlit Page Configuration & Branding
 # ------------------------------
