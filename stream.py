@@ -448,8 +448,8 @@ def extract_all_iqms(result_dir: Path):
 def main():
     st.title("DICOM → BIDS → MRIQC")
     
-    # Check for session ID in URL params
-    session_id = st.experimental_get_query_params().get("session", [None])[0]
+    # Check for session ID in URL params st.query_params
+    session_id = st.query_params().get("session", [None])[0]
     
     if session_id and session_id in UPLOAD_CACHE:
         file_path = UPLOAD_CACHE.pop(session_id)
