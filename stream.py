@@ -118,46 +118,83 @@ st.caption("Supported by MAI Lab")
 # ------------------------------
 
 # Temporary storage for uploaded files
-UPLOAD_TRACKER = {}
+# Use a single tracking dictionary
+UPLOAD_TRACKER: Dict[str, Dict[str, Any]] = {}
 
 @app.post("/api/receive-dicom")
 async def receive_dicom(dicom_zip: UploadFile = File(...)):
-    upload_id = str(uuid.uuid4())
-    file_path = f"temp_uploads/{upload_id}.zip"
-    
-    # Track upload start
-    UPLOAD_TRACKER[upload_id] = {
-        "status": "uploading",
-        "progress": 0,
-        "start_time": time.time()
-    }
-    
-    # Stream upload to disk
-    with open(file_path, "wb") as f:
-        while contents := await dicom_zip.read(8192):  # 8KB chunks
-            f.write(contents)
-            # Update progress (simplified example)
-            UPLOAD_TRACKER[upload_id]["progress"] = min(
-                f.tell() / (dicom_zip.size or f.tell() * 2), 
-                0.99
-            )
-    
-    # Mark upload complete
-    UPLOAD_TRACKER[upload_id].update({
-        "status": "ready",
-        "progress": 1,
-        "file_path": file_path,
-        "complete_time": time.time()
-    })
-    
-    return {"upload_id": upload_id}
+    """Handle DICOM file upload with progress tracking"""
+    try:
+        upload_id = str(uuid.uuid4())
+        file_path = f"temp_uploads/{upload_id}.zip"
+        
+        # Ensure directory exists
+        Path("temp_uploads").mkdir(parents=True, exist_ok=True)
+        
+        # Initialize tracking
+        UPLOAD_TRACKER[upload_id] = {
+            "status": "uploading",
+            "progress": 0,
+            "start_time": time.time(),
+            "file_path": file_path,
+            "size": 0
+        }
+        
+        # Stream upload to disk with progress tracking
+        with open(file_path, "wb") as f:
+            total_size = 0
+            while chunk := await dicom_zip.read(8192):  # 8KB chunks
+                f.write(chunk)
+                total_size += len(chunk)
+                
+                # Update progress (avoid division by zero)
+                if dicom_zip.size:
+                    progress = min(total_size / dicom_zip.size, 0.99)
+                else:
+                    progress = 0.99  # If size unknown, just show progress
+                
+                UPLOAD_TRACKER[upload_id].update({
+                    "progress": progress,
+                    "size": total_size
+                })
+        
+        # Mark upload complete
+        UPLOAD_TRACKER[upload_id].update({
+            "status": "completed",
+            "progress": 1.0,
+            "complete_time": time.time()
+        })
+        
+        return {
+            "upload_id": upload_id,
+            "session_id": upload_id,  # Using upload_id as session_id for simplicity
+            "file_path": file_path
+        }
+        
+    except Exception as e:
+        # Clean up if upload failed
+        if upload_id in UPLOAD_TRACKER:
+            UPLOAD_TRACKER[upload_id]["status"] = "failed"
+            UPLOAD_TRACKER[upload_id]["error"] = str(e)
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process upload: {str(e)}"
+        )
 
 @app.get("/api/upload-status/{upload_id}")
 async def get_upload_status(upload_id: str):
+    """Check the status of an upload"""
     if upload_id not in UPLOAD_TRACKER:
-        raise HTTPException(status_code=404, detail="Upload not found")
-    return UPLOAD_TRACKER[upload_id]
-
+        raise HTTPException(
+            status_code=404,
+            detail="Upload not found. It may have expired or been processed already."
+        )
+    
+    return {
+        "upload_id": upload_id,
+        **UPLOAD_TRACKER[upload_id]
+    }
             
 def generate_dcm2bids_config(temp_dir: Path) -> Path:
     config = {
