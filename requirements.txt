@@ -8,6 +8,7 @@ pandas
 numpy
 nibabel
 pydicom
+typing
 dcm2bids @ git+https://github.com/UNFmontreal/Dcm2Bids.git@3.2.0#egg=dcm2bids
 
 
