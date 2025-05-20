@@ -19,9 +19,15 @@ from typing import Dict, Any
 
 app = FastAPI()
 
+# Enable CORS
+# Enable CORS with specific origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://haske.online:5000", "https://www.haske.online"],
+    allow_origins=[
+        "https://haske.online",
+        "https://haske.online:5000",
+        "https://haske.online:8090"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -121,11 +127,12 @@ st.caption("Supported by MAI Lab")
 
 # Temporary storage for uploaded files
 # Use a single tracking dictionary
+# Upload tracking with expiration
 UPLOAD_TRACKER: Dict[str, Dict[str, Any]] = {}
 
 @app.post("/api/receive-dicom")
 async def receive_dicom(dicom_zip: UploadFile = File(...)):
-    """Handle DICOM file upload with progress tracking"""
+    """Handle large DICOM file uploads with progress tracking"""
     try:
         upload_id = str(uuid.uuid4())
         file_path = f"temp_uploads/{upload_id}.zip"
@@ -142,25 +149,25 @@ async def receive_dicom(dicom_zip: UploadFile = File(...)):
             "size": 0
         }
         
-        # Stream upload to disk with progress tracking
+        # Stream upload with progress tracking
         with open(file_path, "wb") as f:
             total_size = 0
-            while chunk := await dicom_zip.read(8192):  # 8KB chunks
+            while chunk := await dicom_zip.read(8192 * 16):  # Larger 128KB chunks
                 f.write(chunk)
                 total_size += len(chunk)
                 
-                # Update progress (avoid division by zero)
+                # Update progress
                 if dicom_zip.size:
                     progress = min(total_size / dicom_zip.size, 0.99)
                 else:
-                    progress = 0.99  # If size unknown, just show progress
+                    progress = 0.99
                 
                 UPLOAD_TRACKER[upload_id].update({
                     "progress": progress,
                     "size": total_size
                 })
         
-        # Mark upload complete
+        # Mark complete
         UPLOAD_TRACKER[upload_id].update({
             "status": "completed",
             "progress": 1.0,
@@ -169,34 +176,40 @@ async def receive_dicom(dicom_zip: UploadFile = File(...)):
         
         return {
             "upload_id": upload_id,
-            "session_id": upload_id,  # Using upload_id as session_id for simplicity
-            "file_path": file_path
+            "session_id": upload_id  # Using upload_id as session_id
         }
         
     except Exception as e:
-        # Clean up if upload failed
         if upload_id in UPLOAD_TRACKER:
-            UPLOAD_TRACKER[upload_id]["status"] = "failed"
-            UPLOAD_TRACKER[upload_id]["error"] = str(e)
-        
+            UPLOAD_TRACKER[upload_id].update({
+                "status": "failed",
+                "error": str(e)
+            })
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to process upload: {str(e)}"
+            detail=f"Upload failed: {str(e)}"
         )
 
 @app.get("/api/upload-status/{upload_id}")
 async def get_upload_status(upload_id: str):
-    """Check the status of an upload"""
+    """Check upload status with expiration"""
     if upload_id not in UPLOAD_TRACKER:
         raise HTTPException(
             status_code=404,
-            detail="Upload not found. It may have expired or been processed already."
+            detail="Upload not found or expired"
         )
     
-    return {
-        "upload_id": upload_id,
-        **UPLOAD_TRACKER[upload_id]
-    }
+    # Clean up old uploads (>24 hours)
+    upload_data = UPLOAD_TRACKER[upload_id]
+    if time.time() - upload_data.get("start_time", 0) > 86400:
+        del UPLOAD_TRACKER[upload_id]
+        raise HTTPException(
+            status_code=410,
+            detail="Upload session expired"
+        )
+    
+    return upload_data
+
             
 def generate_dcm2bids_config(temp_dir: Path) -> Path:
     config = {
