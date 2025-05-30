@@ -15,6 +15,7 @@ from io import BytesIO
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
+from urllib.parse import urlencode
 
 backend_app = FastAPI()
 
@@ -30,35 +31,6 @@ backend_app.add_middleware(
 # Dictionary to track processing jobs
 processing_jobs: Dict[str, Dict[str, Any]] = {}
 
-@backend_app.post("/api/process")
-async def process_dicom_from_orthanc(
-    dicom_zip: UploadFile = File(...),
-    subject_id: str = "01"
-):
-    try:
-        job_id = str(uuid.uuid4())
-        
-        # Create temp directory for this job
-        temp_dir = Path(f"temp_{job_id}")
-        temp_dir.mkdir(exist_ok=True)
-        
-        # Save the uploaded file
-        zip_path = temp_dir / "dicom.zip"
-        with open(zip_path, "wb") as f:
-            f.write(await dicom_zip.read())
-        
-        # Store job information
-        processing_jobs[job_id] = {
-            "status": "received",
-            "subject_id": subject_id,
-            "temp_dir": str(temp_dir),
-            "created_at": datetime.datetime.now()
-        }
-        
-        return {"job_id": job_id}
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 # ------------------------------
 # Streamlit Page Configuration
@@ -138,7 +110,53 @@ with st.sidebar:
 # ------------------------------
 # Helper Functions
 # ------------------------------
+# Add this helper function
+def download_orthanc_zip(orthanc_id, patient_id):
+    """Download DICOM ZIP from Orthanc via backend"""
+    try:
+        backend_url = "https://haske.online:8090"
+        
+        # Request processing
+        process_url = f"{backend_url}/mriqc/process"
+        response = requests.post(process_url, json={
+            "orthancId": orthanc_id,
+            "patientID": patient_id
+        }, verify=False)
+        
+        if response.status_code != 200:
+            st.error(f"Backend error: {response.text}")
+            return None
             
+        data = response.json()
+        if not data.get('success'):
+            st.error(f"Processing failed: {data.get('error', 'Unknown error')}")
+            return None
+            
+        # Download the ZIP file
+        zip_filename = data['zipFilename']
+        download_url = f"{backend_url}/mriqc/download/{zip_filename}"
+        zip_response = requests.get(download_url, stream=True, verify=False)
+        
+        if zip_response.status_code != 200:
+            st.error(f"Failed to download ZIP: {zip_response.text}")
+            return None
+            
+        # Save to temporary file
+        temp_dir = Path(f"temp_orthanc_{orthanc_id}")
+        temp_dir.mkdir(exist_ok=True)
+        zip_path = temp_dir / f"{orthanc_id}.zip"
+        
+        with open(zip_path, 'wb') as f:
+            for chunk in zip_response.iter_content(chunk_size=8192):
+                f.write(chunk)
+                
+        return zip_path
+        
+    except Exception as e:
+        st.error(f"Error downloading from Orthanc: {str(e)}")
+        st.exception(e)
+        return None
+
 def generate_dcm2bids_config(temp_dir: Path) -> Path:
     config = {
         "descriptions": [
@@ -483,21 +501,32 @@ API_BASE = "http://52.91.185.103:8000"
 def main():
     st.title("MRI Quality Control")
     query_params = st.experimental_get_query_params()
-    job_id = query_params.get("job_id", [None])[0]
-    
-    if job_id and job_id in processing_jobs:
-        st.session_state["current_job"] = processing_jobs[job_id]
-        st.session_state["subj_id"] = processing_jobs[job_id]["subject_id"]
+    patient_id = query_params.get("patient_id", ["01"])[0]
+    orthanc_id = query_params.get("orthanc_id", [None])[0]
 
     # Subject information form
     with st.form("subject_info"):
         st.subheader("Subject Information")
         col1, col2 = st.columns(2)
         with col1:
-            subj_id = st.text_input("Subject ID", value="01")
+            subj_id = st.text_input("Subject ID", value=patient_id)  # Use patient_id from URL
         with col2:
             ses_id = st.text_input("Session ID (optional)")
+        
+        # Add Orthanc ID field if present
+        if orthanc_id:
+            st.info(f"Processing study from Orthanc ID: {orthanc_id}")
+            
         st.form_submit_button("Update Subject Info")
+    
+    # Orthanc processing section
+    if orthanc_id:
+        if st.button("Process from Orthanc", type="primary"):
+            with st.spinner("Downloading DICOM data from Orthanc..."):
+                zip_path = download_orthanc_zip(orthanc_id, patient_id)
+                if zip_path:
+                    st.session_state.dicom_zip_path = str(zip_path)
+                    st.success("DICOM data downloaded successfully!")
     
     # Processing options section
     st.divider()
@@ -553,7 +582,7 @@ def main():
                     st.error(f"Error extracting DICOMs: {str(e)}")
 
     # DICOM to BIDS conversion
-    if dicom_zip:
+    if dicom_zip or "dicom_zip_path" in st.session_state:
         st.divider()
         st.subheader("DICOM Conversion")
         
@@ -567,8 +596,15 @@ def main():
                     # Extract DICOMs
                     dicom_dir = temp_dir / "dicoms"
                     dicom_dir.mkdir(exist_ok=True)
-                    with zipfile.ZipFile(dicom_zip, 'r') as zf:
-                        zf.extractall(dicom_dir)
+                    
+                    # Handle either uploaded file or Orthanc downloaded file
+                    if dicom_zip:
+                        with zipfile.ZipFile(dicom_zip, 'r') as zf:
+                            zf.extractall(dicom_dir)
+                    elif "dicom_zip_path" in st.session_state:
+                        with zipfile.ZipFile(st.session_state.dicom_zip_path, 'r') as zf:
+                            zf.extractall(dicom_dir)
+                            
                     st.success(f"DICOMs extracted to {dicom_dir}")
 
                     # Convert to BIDS
