@@ -1,25 +1,32 @@
-import pandas as pd
-from bs4 import BeautifulSoup
-import streamlit as st
-import zipfile
-import uuid
-import shutil
-import subprocess
-import requests
-from pathlib import Path
 import os
 import json
-import datetime
+import uuid
 import time
+import shutil
+import logging
+import zipfile
+import threading
+import datetime
+import subprocess
 from io import BytesIO
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Any
+from pathlib import Path
+from typing import Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor
 
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi.middleware.cors import CORSMiddleware
+import streamlit as st
+from fastapi.responses import FileResponse
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Enable CORS
 # Enable CORS with specific origins
 app.add_middleware(
     CORSMiddleware,
@@ -32,6 +39,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global job tracker
+PROCESSING_JOBS = {}
+job_executor = ThreadPoolExecutor(max_workers=4)
 
 # ------------------------------
 # Streamlit Page Configuration
@@ -118,99 +129,326 @@ with st.sidebar:
 st.title("Haske - MRI Image Quality Assessment")
 st.caption("Supported by MAI Lab")
 
-# [Rest of your original code remains the same from the helper functions section onward...]
-# Just remove the footer section at the end since we've moved it to the sidebar
+# Check if started from Orthanc
+query_params = st.experimental_get_query_params()
+patient_id_from_orthanc = query_params.get('patient_id', [None])[0]
+processing_started = query_params.get('processing', [None])[0] == 'started'
+
+if patient_id_from_orthanc and processing_started:
+    st.success(f"🔄 MRIQC processing started for Patient ID: {patient_id_from_orthanc}")
+    st.info("This process was initiated from ORTHANC. Processing is running in the background.")
+    
+    # Show job status if available
+    if st.button("Check Processing Status"):
+        st.info("Check your Orthanc interface for processing updates, or monitor the server logs.")
+
+# Regular Streamlit interface for manual uploads
+st.divider()
+st.subheader("Manual Upload (Alternative)")
+
+# Subject information form
+with st.form("subject_info"):
+    st.subheader("Subject Information")
+    col1, col2 = st.columns(2)
+    with col1:
+        subj_id = st.text_input("Subject ID", value=patient_id_from_orthanc or "01")
+    with col2:
+        ses_id = st.text_input("Session ID (optional)")
+    st.form_submit_button("Update Subject Info")
+
+# Add a status dashboard for background jobs
+if st.checkbox("Show Processing Dashboard"):
+    st.subheader("Active Processing Jobs")
+    
+    if PROCESSING_JOBS:
+        for job_id, job in PROCESSING_JOBS.items():
+            with st.expander(f"Job {job_id} - Patient {job['patient_id']}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"**Status:** {job['status']}")
+                    st.write(f"**Created:** {job['created_at']}")
+                with col2:
+                    st.write(f"**Progress:** {job.get('progress', 'N/A')}")
+                    if job.get('error'):
+                        st.error(f"Error: {job['error']}")
+    else:
+        st.info("No active jobs")
+
+# Run FastAPI server in a separate thread when Streamlit starts
+if 'fastapi_started' not in st.session_state:
+    import uvicorn
+    
+    def run_fastapi():
+        uvicorn.run(app, host="0.0.0.0", port=8502, log_level="info")
+    
+    fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
+    fastapi_thread.start()
+    st.session_state.fastapi_started = True
+    
+    st.success("🚀 Backend API server started on port 8090")
 
 # ------------------------------
-# Helper Functions
+# API Endpoints
 # ------------------------------
 
 # Temporary storage for uploaded files
-# Use a single tracking dictionary
-# Upload tracking with expiration
 UPLOAD_TRACKER: Dict[str, Dict[str, Any]] = {}
 
-@app.post("/api/receive-dicom")
-async def receive_dicom(dicom_zip: UploadFile = File(...)):
-    """Handle large DICOM file uploads with progress tracking"""
+@app.post("/api/upload-dicom")
+async def upload_dicom_from_orthanc(
+    dicom_zip: UploadFile = File(...),
+    patient_id: str = Form(...),
+    study_instance_uid: str = Form(default=""),
+    source: str = Form(default="orthanc"),
+    auto_process: bool = Form(default=True)
+):
+    """
+    Endpoint to receive DICOM ZIP from Orthanc and process it
+    """
     try:
-        upload_id = str(uuid.uuid4())
-        file_path = f"temp_uploads/{upload_id}.zip"
+        # Generate job ID
+        job_id = str(uuid.uuid4())[:8]
         
-        # Ensure directory exists
-        Path("temp_uploads").mkdir(parents=True, exist_ok=True)
+        # Create temp directory
+        temp_dir = Path(f"temp_{job_id}")
+        temp_dir.mkdir(exist_ok=True)
         
-        # Initialize tracking
-        UPLOAD_TRACKER[upload_id] = {
-            "status": "uploading",
-            "progress": 0,
-            "start_time": time.time(),
-            "file_path": file_path,
-            "size": 0
+        # Save uploaded ZIP
+        zip_path = temp_dir / f"{patient_id}_{int(time.time())}.zip"
+        with open(zip_path, "wb") as buffer:
+            content = await dicom_zip.read()
+            buffer.write(content)
+        
+        logger.info(f"Received DICOM ZIP for patient {patient_id}, size: {len(content)} bytes")
+        
+        # Store job info
+        PROCESSING_JOBS[job_id] = {
+            "status": "received",
+            "patient_id": patient_id,
+            "study_instance_uid": study_instance_uid,
+            "temp_dir": str(temp_dir),
+            "zip_path": str(zip_path),
+            "created_at": datetime.datetime.now().isoformat(),
+            "progress": "DICOM received successfully"
         }
         
-        # Stream upload with progress tracking
-        with open(file_path, "wb") as f:
-            total_size = 0
-            while chunk := await dicom_zip.read(8192 * 16):  # Larger 128KB chunks
-                f.write(chunk)
-                total_size += len(chunk)
-                
-                # Update progress
-                if dicom_zip.size:
-                    progress = min(total_size / dicom_zip.size, 0.99)
-                else:
-                    progress = 0.99
-                
-                UPLOAD_TRACKER[upload_id].update({
-                    "progress": progress,
-                    "size": total_size
-                })
-        
-        # Mark complete
-        UPLOAD_TRACKER[upload_id].update({
-            "status": "completed",
-            "progress": 1.0,
-            "complete_time": time.time()
-        })
+        # If auto_process is True, start processing in background
+        if auto_process:
+            # Submit processing job to thread pool
+            future = job_executor.submit(process_dicom_job, job_id)
+            PROCESSING_JOBS[job_id]["future"] = future
         
         return {
-            "upload_id": upload_id,
-            "session_id": upload_id  # Using upload_id as session_id
+            "success": True,
+            "job_id": job_id,
+            "message": f"DICOM received for patient {patient_id}",
+            "auto_processing": auto_process
         }
         
     except Exception as e:
-        if upload_id in UPLOAD_TRACKER:
-            UPLOAD_TRACKER[upload_id].update({
-                "status": "failed",
-                "error": str(e)
-            })
-        raise HTTPException(
-            status_code=500,
-            detail=f"Upload failed: {str(e)}"
-        )
+        logger.error(f"Error processing upload: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/upload-status/{upload_id}")
-async def get_upload_status(upload_id: str):
-    """Check upload status with expiration"""
-    if upload_id not in UPLOAD_TRACKER:
-        raise HTTPException(
-            status_code=404,
-            detail="Upload not found or expired"
-        )
+@app.get("/api/status/{job_id}")
+async def get_job_status(job_id: str):
+    """Get processing status for a job"""
+    if job_id not in PROCESSING_JOBS:
+        raise HTTPException(status_code=404, detail="Job not found")
     
-    # Clean up old uploads (>24 hours)
-    upload_data = UPLOAD_TRACKER[upload_id]
-    if time.time() - upload_data.get("start_time", 0) > 86400:
-        del UPLOAD_TRACKER[upload_id]
-        raise HTTPException(
-            status_code=410,
-            detail="Upload session expired"
-        )
-    
-    return upload_data
+    job = PROCESSING_JOBS[job_id]
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "patient_id": job["patient_id"],
+        "progress": job.get("progress", ""),
+        "created_at": job["created_at"],
+        "error": job.get("error")
+    }
 
-            
+@app.get("/api/results/{job_id}")
+async def get_job_results(job_id: str):
+    """Download results for completed job"""
+    if job_id not in PROCESSING_JOBS:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = PROCESSING_JOBS[job_id]
+    if job["status"] != "complete":
+        raise HTTPException(status_code=400, detail="Job not complete")
+    
+    results_path = job.get("results_path")
+    if not results_path or not Path(results_path).exists():
+        raise HTTPException(status_code=404, detail="Results not found")
+    
+    # Return file for download
+    return FileResponse(
+        results_path,
+        media_type='application/zip',
+        filename=f"mriqc_results_{job_id}.zip"
+    )
+
+@app.post("/api/start-processing/{job_id}")
+async def start_processing(job_id: str):
+    """Manually start processing for a job"""
+    if job_id not in PROCESSING_JOBS:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = PROCESSING_JOBS[job_id]
+    if job["status"] != "received":
+        raise HTTPException(status_code=400, detail="Job already processing or complete")
+    
+    # Start processing
+    future = job_executor.submit(process_dicom_job, job_id)
+    PROCESSING_JOBS[job_id]["future"] = future
+    
+    return {"success": True, "message": "Processing started"}
+
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "ok",
+        "active_jobs": len([j for j in PROCESSING_JOBS.values() if j["status"] == "processing"]),
+        "total_jobs": len(PROCESSING_JOBS),
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+# ------------------------------
+# Background Processing Functions
+# ------------------------------
+
+def process_dicom_job(job_id: str):
+    """Process DICOM conversion and MRIQC in background thread"""
+    try:
+        job = PROCESSING_JOBS[job_id]
+        job["status"] = "processing"
+        job["progress"] = "Starting DICOM to BIDS conversion..."
+        
+        temp_dir = Path(job["temp_dir"])
+        zip_path = Path(job["zip_path"])
+        patient_id = job["patient_id"]
+        
+        # Extract DICOMs
+        job["progress"] = "Extracting DICOM files..."
+        dicom_dir = temp_dir / "dicoms"
+        dicom_dir.mkdir(exist_ok=True)
+        
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(dicom_dir)
+        
+        # Convert to BIDS
+        job["progress"] = "Converting to BIDS format..."
+        bids_out = temp_dir / "bids_output"
+        bids_out.mkdir(exist_ok=True)
+        
+        # Use session as empty string to avoid session folders
+        ses_id = ""
+        
+        config_file = generate_dcm2bids_config(temp_dir)
+        run_dcm2bids(dicom_dir, bids_out, patient_id, ses_id, config_file)
+        classify_and_move_original_files(bids_out, patient_id, ses_id)
+        create_bids_top_level_files(bids_out, patient_id)
+        
+        # Create BIDS ZIP
+        bids_zip_path = temp_dir / "bids_dataset.zip"
+        zip_directory(bids_out, bids_zip_path)
+        
+        job["progress"] = "BIDS conversion complete. Starting MRIQC..."
+        job["bids_zip_path"] = str(bids_zip_path)
+        
+        # Run MRIQC
+        modalities = ["T1w"]  # Default, can be made configurable
+        results_path = run_mriqc_processing(bids_zip_path, patient_id, modalities, job_id)
+        
+        # Mark as complete
+        job["status"] = "complete"
+        job["progress"] = "MRIQC processing complete!"
+        job["results_path"] = results_path
+        job["completed_at"] = datetime.datetime.now().isoformat()
+        
+        logger.info(f"Job {job_id} completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Job {job_id} failed: {str(e)}")
+        PROCESSING_JOBS[job_id]["status"] = "failed"
+        PROCESSING_JOBS[job_id]["error"] = str(e)
+        PROCESSING_JOBS[job_id]["progress"] = f"Failed: {str(e)}"
+
+def run_mriqc_processing(bids_zip_path: Path, patient_id: str, modalities: list, job_id: str):
+    """Run MRIQC processing via API"""
+    try:
+        job = PROCESSING_JOBS[job_id]
+        
+        # Your existing MRIQC API processing code
+        API_BASE = "http://52.91.185.103:8000"
+        
+        with open(bids_zip_path, 'rb') as f:
+            files = {'bids_zip': ('bids_dataset.zip', f, 'application/zip')}
+            metadata = {
+                'participant_label': patient_id,
+                'modalities': " ".join(modalities),
+                'session_id': "baseline",
+                'n_procs': "16",
+                'mem_gb': "64"
+            }
+
+            job["progress"] = "Submitting to MRIQC service..."
+            submit_response = requests.post(
+                f"{API_BASE}/submit-job", 
+                files=files, 
+                data=metadata
+            )
+
+        if submit_response.status_code != 200:
+            raise Exception(f"MRIQC submission failed: {submit_response.text}")
+
+        mriqc_job_id = submit_response.json().get("job_id")
+        job["progress"] = f"MRIQC job submitted (ID: {mriqc_job_id})"
+        
+        # Poll for results
+        result = None
+        for attempt in range(120):  # 20 minute timeout
+            time.sleep(10)
+            status_response = requests.get(f"{API_BASE}/job-status/{mriqc_job_id}")
+
+            if status_response.status_code == 200:
+                result = status_response.json()
+                if result["status"] == "complete":
+                    break
+                elif result["status"] == "failed":
+                    raise Exception(f"MRIQC processing failed: {result.get('error')}")
+                    
+            job["progress"] = f"MRIQC processing... (attempt {attempt + 1}/120)"
+
+        if not result or result["status"] != "complete":
+            raise Exception("MRIQC processing timed out")
+
+        # Download results
+        job["progress"] = "Downloading MRIQC results..."
+        download_url = f"{API_BASE}/download/{mriqc_job_id}"
+        response = requests.get(download_url)
+        
+        if response.status_code != 200:
+            raise Exception(f"Results download failed: {response.text}")
+
+        # Save results
+        temp_dir = Path(job["temp_dir"])
+        results_zip_path = temp_dir / f"mriqc_results_{job_id}.zip"
+        with open(results_zip_path, 'wb') as f:
+            f.write(response.content)
+
+        # Clean up MRIQC job
+        requests.delete(f"{API_BASE}/delete-job/{mriqc_job_id}")
+        
+        return str(results_zip_path)
+        
+    except Exception as e:
+        logger.error(f"MRIQC processing failed for job {job_id}: {str(e)}")
+        raise
+
+# ------------------------------
+# DICOM to BIDS Conversion Functions
+# ------------------------------
+
 def generate_dcm2bids_config(temp_dir: Path) -> Path:
     config = {
         "descriptions": [
@@ -334,7 +572,6 @@ def generate_dcm2bids_config(temp_dir: Path) -> Path:
         json.dump(config, f, indent=4)
     return config_file
 
-
 def run_dcm2bids(dicom_dir: Path, bids_out: Path, subj_id: str, ses_id: str, config_file: Path):
     cmd = ["dcm2bids", "-d", str(dicom_dir), "-p", subj_id,
            "-c", str(config_file), "-o", str(bids_out)]
@@ -346,38 +583,6 @@ def run_dcm2bids(dicom_dir: Path, bids_out: Path, subj_id: str, ses_id: str, con
         st.error(f"dcm2bids error:\n{result.stderr}")
     else:
         st.success("dcm2bids completed successfully.")
-
-
-def classify_from_metadata(meta):
-    """
-    Classifies based on metadata if and only if ImageType includes 'ORIGINAL'.
-    """
-    image_type = meta.get("ImageType", [])
-    if isinstance(image_type, str):
-        image_type = [image_type]
-
-    if not any("original" in t.lower() for t in image_type):
-        return None, None  # Skip derived images
-
-    desc = (meta.get("SeriesDescription", "") + " " +
-            meta.get("ProtocolName", "")).lower()
-    pulse = meta.get("PulseSequenceName", "").lower()
-
-    if "t1" in desc and "flair" not in desc:
-        return "anat", "T1w"
-    elif "t2" in desc:
-        return "anat", "T2w"
-    elif "flair" in desc or "fluid" in desc:
-        return "anat", "FLAIR"
-    elif "dwi" in desc or "dti" in desc:
-        return "dwi", "dwi"
-    elif "bold" in desc or "fmri" in desc or "functional" in desc or "activation" in desc or "epi" in pulse:
-        return "func", "bold"
-    elif "asl" in desc or "perfusion" in desc:
-        return "perf", "asl"
-    else:
-        return None, None
-
 
 def classify_and_move_original_files(bids_out: Path, subj_id: str, ses_id: str):
     tmp_folder = bids_out / "tmp_dcm2bids" / f"sub-{subj_id}_ses-{ses_id}"
@@ -462,11 +667,6 @@ def classify_and_move_original_files(bids_out: Path, subj_id: str, ses_id: str):
     shutil.rmtree(tmp_folder.parent, ignore_errors=True)
     st.info("Finished organizing ORIGINAL NIfTI + JSON pairs.")
 
-
-# This line replaces your old move_files_in_tmp()
-move_files_in_tmp = classify_and_move_original_files
-
-
 def create_bids_top_level_files(bids_dir: Path, subject_id: str):
     dd_file = bids_dir / "dataset_description.json"
     if not dd_file.exists():
@@ -516,11 +716,13 @@ Please see the official [BIDS documentation](https://bids.neuroimaging.io) for d
         with open(participants_json, 'w') as f:
             json.dump(pjson, f, indent=4)
 
-
 def zip_directory(folder_path: Path, zip_file_path: Path):
     shutil.make_archive(str(zip_file_path.with_suffix("")),
                         'zip', root_dir=folder_path)
 
+# ------------------------------
+# MRIQC Report Processing
+# ------------------------------
 
 def extract_iqms_from_html(html_file: Path):
     iqms = {}
@@ -539,7 +741,6 @@ def extract_iqms_from_html(html_file: Path):
 
     return iqms
 
-
 def extract_all_iqms(result_dir: Path):
     iqm_list = []
     html_reports = list(result_dir.rglob("*.html"))
@@ -550,83 +751,10 @@ def extract_all_iqms(result_dir: Path):
     return pd.DataFrame(iqm_list)
 
 # ------------------------------
-# Main Streamlit App
+# Streamlit Processing Interface
 # ------------------------------
 
-# Constants
-API_BASE = "http://52.91.185.103:8000"
-WS_URL = "ws://52.91.185.103:8000/ws/mriqc"
-
 def main():
-    st.title("MRI Quality Control")
-    
-    # Initialize session state variables
-    if 'dicom_ready' not in st.session_state:
-        st.session_state.dicom_ready = False
-    if 'upload_id' not in st.session_state:
-        st.session_state.upload_id = None
-    
-    # Check for session ID in URL parameters
-    session_id = st.query_params.get("session", None)
-    upload_id = st.query_params.get("upload", [None])[0]
-    
-    # Handle session ID from URL
-    if session_id:
-        if session_id in UPLOAD_TRACKER:
-            upload_data = UPLOAD_TRACKER[session_id]
-            if upload_data["status"] == "completed":
-                st.session_state.dicom_ready = True
-                st.session_state.upload_id = session_id
-                st.success("DICOM data loaded successfully!")
-            else:
-                st.warning(f"Upload status: {upload_data['status']}")
-        else:
-            st.error("Invalid session ID")
-    
-    # Handle upload ID from URL with progress tracking
-    if upload_id and not st.session_state.dicom_ready:
-        with st.status("Receiving DICOM data...", expanded=True) as status:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            while True:
-                try:
-                    response = requests.get(
-                        f"{API_BASE}/api/upload-status/{upload_id}"
-                    )
-                    data = response.json()
-                    
-                    if data["status"] == "ready":
-                        progress_bar.progress(1.0)
-                        status_text.success("DICOM data received!")
-                        st.session_state.dicom_ready = True
-                        st.session_state.upload_id = upload_id
-                        break
-                    elif data["status"] == "uploading":
-                        progress_bar.progress(data["progress"])
-                        status_text.write(
-                            f"Receiving data... {int(data['progress'] * 100)}%"
-                        )
-                    else:
-                        status_text.error("Upload failed")
-                        break
-                    
-                except Exception as e:
-                    status_text.error(f"Error checking status: {str(e)}")
-                    break
-                
-                time.sleep(1)
-    
-    # Subject information form
-    with st.form("subject_info"):
-        st.subheader("Subject Information")
-        col1, col2 = st.columns(2)
-        with col1:
-            subj_id = st.text_input("Subject ID", value="01")
-        with col2:
-            ses_id = st.text_input("Session ID (optional)")
-        st.form_submit_button("Update Subject Info")
-    
     # Processing options section
     st.divider()
     st.subheader("Processing Options")
