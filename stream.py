@@ -111,45 +111,35 @@ with st.sidebar:
 # Helper Functions
 # ------------------------------
 # Add this helper function
-def download_orthanc_zip(orthanc_id, patient_id):
-    """Download DICOM ZIP from Orthanc via backend"""
+def download_orthanc_zip_direct(orthanc_id):
+    """Download DICOM ZIP directly from Orthanc"""
     try:
-        backend_url = "https://haske.online:8090"
+        ORTHANC_URL = "https://haske.online:5000"
+        zip_url = f"{ORTHANC_URL}/studies/{orthanc_id}/archive"
         
-        # Request processing
-        process_url = f"{backend_url}/mriqc/process"
-        response = requests.post(process_url, json={
-            "orthancId": orthanc_id,
-            "patientID": patient_id
-        }, verify=False)
+        st.write(f"Downloading DICOM archive from: {zip_url}")
+        response = requests.get(
+            zip_url,
+            stream=True,
+            verify=False,
+            timeout=30
+        )
         
         if response.status_code != 200:
-            st.error(f"Backend error: {response.text}")
+            st.error(f"Orthanc API error: {response.status_code} - {response.text}")
             return None
             
-        data = response.json()
-        if not data.get('success'):
-            st.error(f"Processing failed: {data.get('error', 'Unknown error')}")
-            return None
-            
-        # Download the ZIP file
-        zip_filename = data['zipFilename']
-        download_url = f"{backend_url}/mriqc/download/{zip_filename}"
-        zip_response = requests.get(download_url, stream=True, verify=False)
-        
-        if zip_response.status_code != 200:
-            st.error(f"Failed to download ZIP: {zip_response.text}")
-            return None
-            
-        # Save to temporary file
+        # Create temp directory
         temp_dir = Path(f"temp_orthanc_{orthanc_id}")
         temp_dir.mkdir(exist_ok=True)
         zip_path = temp_dir / f"{orthanc_id}.zip"
         
+        # Stream the download to file
         with open(zip_path, 'wb') as f:
-            for chunk in zip_response.iter_content(chunk_size=8192):
+            for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
                 
+        st.success(f"Downloaded DICOM archive: {zip_path}")
         return zip_path
         
     except Exception as e:
@@ -521,12 +511,33 @@ def main():
     
     # Orthanc processing section
     if orthanc_id:
-        if st.button("Process from Orthanc", type="primary"):
-            with st.spinner("Downloading DICOM data from Orthanc..."):
-                zip_path = download_orthanc_zip(orthanc_id, patient_id)
-                if zip_path:
-                    st.session_state.dicom_zip_path = str(zip_path)
-                    st.success("DICOM data downloaded successfully!")
+            if st.button("🚀 Process Directly from Orthanc", type="primary"):
+                with st.spinner("Downloading DICOM data from Orthanc..."):
+                    zip_path = download_orthanc_zip_direct(orthanc_id)
+                    if zip_path:
+                        st.session_state.dicom_zip_path = str(zip_path)
+                        
+                        # Try to extract PatientID from DICOM if not provided
+                        if patient_id == "01":
+                            try:
+                                with zipfile.ZipFile(zip_path, 'r') as zf:
+                                    # Get first DICOM file in archive
+                                    dicom_files = [f for f in zf.namelist() if f.lower().endswith('.dcm')]
+                                    if dicom_files:
+                                        with zf.open(dicom_files[0]) as dcm_file:
+                                            # Read just the PatientID tag (0010,0020)
+                                            dcm_file.seek(0)
+                                            content = dcm_file.read(4096)  # Read first 4KB which should contain header
+                                            if b'\x10\x00\x20\x00' in content:  # (0010,0020) tag
+                                                start = content.index(b'\x10\x00\x20\x00') + 4
+                                                end = content.index(b'\x00', start)
+                                                extracted_id = content[start:end].decode('ascii').strip()
+                                                if extracted_id:
+                                                    st.session_state.patient_id = extracted_id
+                                                    st.experimental_set_query_params(patient_id=extracted_id, orthanc_id=orthanc_id)
+                                                    st.rerun()
+                            except Exception as e:
+                                st.warning(f"Couldn't extract PatientID from DICOM: {str(e)}")
     
     # Processing options section
     st.divider()
