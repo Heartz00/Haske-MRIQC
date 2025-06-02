@@ -591,7 +591,7 @@ def main():
                     st.error(f"Error extracting DICOMs: {str(e)}")
 
     # DICOM to BIDS conversion
-    if dicom_zip or "dicom_zip_path" in st.session_state:
+    if "dicom_zip_path" in st.session_state:
         st.divider()
         st.subheader("DICOM Conversion")
         
@@ -607,10 +607,7 @@ def main():
                     dicom_dir.mkdir(exist_ok=True)
                     
                     # Handle either uploaded file or Orthanc downloaded file
-                    if dicom_zip:
-                        with zipfile.ZipFile(dicom_zip, 'r') as zf:
-                            zf.extractall(dicom_dir)
-                    elif "dicom_zip_path" in st.session_state:
+                    if "dicom_zip_path" in st.session_state:
                         with zipfile.ZipFile(st.session_state.dicom_zip_path, 'r') as zf:
                             zf.extractall(dicom_dir)
                             
