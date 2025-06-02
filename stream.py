@@ -432,7 +432,7 @@ API_BASE = "http://52.91.185.103:8000"
 
 def main():
     st.title("MRI Quality Control")
-    query_params = st.experimental_get_query_params()
+    query_params = st.query_params
     patient_id = query_params.get("patient_id", ["01"])[0]
     orthanc_id = query_params.get("orthanc_id", [None])[0]
 
@@ -476,7 +476,8 @@ def main():
                                             extracted_id = content[start:end].decode('ascii').strip()
                                             if extracted_id:
                                                 st.session_state.patient_id = extracted_id
-                                                st.experimental_set_query_params(patient_id=extracted_id, orthanc_id=orthanc_id)
+                                                st.query_params["patient_id"] = extracted_id
+                                                st.query_params["orthanc_id"] = orthanc_id
                                                 st.rerun()
                         except Exception as e:
                             st.warning(f"Couldn't extract PatientID from DICOM: {str(e)}")
