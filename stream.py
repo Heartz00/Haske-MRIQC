@@ -37,7 +37,7 @@ with st.sidebar:
         1. Enter Subject ID (optional)
         2. Enter the Session ID (optional, e.g, baseline, follow up, etc)
         3. Select your preferred modality for analysis (T1w, T2w, DWI, BOLD fMRI, or ASL)
-        4. Images are automatically retrieved from Haske
+        4. Images are automatically retrieved from Orthanc
         5. Click DICOM → BIDS Conversion
         6. Once BIDS converted, you will see the notification: DICOM to BIDS conversion complete
         7. Click Send BIDS to Web for MRIQC
@@ -453,7 +453,7 @@ def main():
     
     # Orthanc processing section
     if orthanc_id:
-        if st.button("🚀 Process Directly from Orthanc", type="primary"):
+        if st.button("🚀 Start Processing of MRI Scan", type="primary"):
             with st.spinner("Downloading DICOM data from Orthanc..."):
                 zip_path = download_orthanc_zip_direct(orthanc_id)
                 if zip_path:
