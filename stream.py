@@ -1,7 +1,6 @@
 import pandas as pd
 from bs4 import BeautifulSoup
 import streamlit as st
-import zipfile
 import uuid
 import shutil
 import subprocess
@@ -12,30 +11,12 @@ import json
 import datetime
 import time
 from io import BytesIO
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Any
-from urllib.parse import urlencode
-
-backend_app = FastAPI()
-
-# Enable CORS
-backend_app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Dictionary to track processing jobs
-processing_jobs: Dict[str, Dict[str, Any]] = {}
-
+import zipfile
 
 # ------------------------------
 # Streamlit Page Configuration
 # ------------------------------
-st.set_page_config(page_title="MRIQC App", layout="wide")
+st.set_page_config(page_title="Haske MRIQC App", layout="wide")
 
 # ------------------------------
 # Sidebar with Collapsible Information
@@ -56,13 +37,12 @@ with st.sidebar:
         1. Enter Subject ID (optional)
         2. Enter the Session ID (optional, e.g, baseline, follow up, etc)
         3. Select your preferred modality for analysis (T1w, T2w, DWI, BOLD fMRI, or ASL)
-        4. Upload a zipped file/folder containing T1w, T2w, DWI, BOLD fMRI, or ASL DICOM images
+        4. Images are automatically retrieved from Haske
         5. Click DICOM → BIDS Conversion
         6. Once BIDS converted, you will see the notification: DICOM to BIDS conversion complete
-        7. Click Send BIDS to Web for MRIQC or if you want the BIDS format, Click Download BIDS Dataset to your device.
-        8. Send the converted BIDS images to MRIQC by clicking Send BIDS to Web for MRIQC for generating the IQMs
-        9. Depending on your internet connection, this can between 5-10 minutes to get your results for a single participant.
-        10. When completed, you can view the report on the web App or download the report of the IQM by clicking the "Download MRIQC results" button including the csv export.
+        7. Click Send BIDS to Web for MRIQC
+        8. Depending on your internet connection, this can between 5-10 minutes to get your results for a single participant.
+        9. When completed, you can view the report on the web App or download the report of the IQM by clicking the "Download MRIQC results" button including the csv export.
         """)
     
     with st.expander("📚 References"):
@@ -110,7 +90,6 @@ with st.sidebar:
 # ------------------------------
 # Helper Functions
 # ------------------------------
-# Add this helper function
 def download_orthanc_zip_direct(orthanc_id):
     """Download DICOM ZIP directly from Orthanc"""
     try:
@@ -270,7 +249,6 @@ def generate_dcm2bids_config(temp_dir: Path) -> Path:
         json.dump(config, f, indent=4)
     return config_file
 
-
 def run_dcm2bids(dicom_dir: Path, bids_out: Path, subj_id: str, ses_id: str, config_file: Path):
     cmd = ["dcm2bids", "-d", str(dicom_dir), "-p", subj_id,
            "-c", str(config_file), "-o", str(bids_out)]
@@ -282,38 +260,6 @@ def run_dcm2bids(dicom_dir: Path, bids_out: Path, subj_id: str, ses_id: str, con
         st.error(f"dcm2bids error:\n{result.stderr}")
     else:
         st.success("dcm2bids completed successfully.")
-
-
-def classify_from_metadata(meta):
-    """
-    Classifies based on metadata if and only if ImageType includes 'ORIGINAL'.
-    """
-    image_type = meta.get("ImageType", [])
-    if isinstance(image_type, str):
-        image_type = [image_type]
-
-    if not any("original" in t.lower() for t in image_type):
-        return None, None  # Skip derived images
-
-    desc = (meta.get("SeriesDescription", "") + " " +
-            meta.get("ProtocolName", "")).lower()
-    pulse = meta.get("PulseSequenceName", "").lower()
-
-    if "t1" in desc and "flair" not in desc:
-        return "anat", "T1w"
-    elif "t2" in desc:
-        return "anat", "T2w"
-    elif "flair" in desc or "fluid" in desc:
-        return "anat", "FLAIR"
-    elif "dwi" in desc or "dti" in desc:
-        return "dwi", "dwi"
-    elif "bold" in desc or "fmri" in desc or "functional" in desc or "activation" in desc or "epi" in pulse:
-        return "func", "bold"
-    elif "asl" in desc or "perfusion" in desc:
-        return "perf", "asl"
-    else:
-        return None, None
-
 
 def classify_and_move_original_files(bids_out: Path, subj_id: str, ses_id: str):
     tmp_folder = bids_out / "tmp_dcm2bids" / f"sub-{subj_id}_ses-{ses_id}"
@@ -398,7 +344,6 @@ def classify_and_move_original_files(bids_out: Path, subj_id: str, ses_id: str):
     shutil.rmtree(tmp_folder.parent, ignore_errors=True)
     st.info("Finished organizing ORIGINAL NIfTI + JSON pairs.")
 
-
 def create_bids_top_level_files(bids_dir: Path, subject_id: str):
     dd_file = bids_dir / "dataset_description.json"
     if not dd_file.exists():
@@ -406,7 +351,7 @@ def create_bids_top_level_files(bids_dir: Path, subject_id: str):
             "Name": "Example dataset",
             "BIDSVersion": "1.6.0",
             "License": "CC0",
-            "Authors": ["Philip Nkwam", "Udunna Anazodo", "Maruf Adewole", "Sekinat Aderibigbe"],
+            "Authors": ["Philip Nkwam", "Ayomide Oladele", "Udunna Anazodo", "Maruf Adewole", "Sekinat Aderibigbe"],
             "DatasetType": "raw"
         }
         with open(dd_file, 'w') as f:
@@ -448,11 +393,9 @@ Please see the official [BIDS documentation](https://bids.neuroimaging.io) for d
         with open(participants_json, 'w') as f:
             json.dump(pjson, f, indent=4)
 
-
 def zip_directory(folder_path: Path, zip_file_path: Path):
     shutil.make_archive(str(zip_file_path.with_suffix("")),
                         'zip', root_dir=folder_path)
-
 
 def extract_iqms_from_html(html_file: Path):
     iqms = {}
@@ -470,7 +413,6 @@ def extract_iqms_from_html(html_file: Path):
                 iqms[metric_name] = metric_value
 
     return iqms
-
 
 def extract_all_iqms(result_dir: Path):
     iqm_list = []
@@ -511,33 +453,33 @@ def main():
     
     # Orthanc processing section
     if orthanc_id:
-            if st.button("🚀 Process Directly from Orthanc", type="primary"):
-                with st.spinner("Downloading DICOM data from Orthanc..."):
-                    zip_path = download_orthanc_zip_direct(orthanc_id)
-                    if zip_path:
-                        st.session_state.dicom_zip_path = str(zip_path)
-                        
-                        # Try to extract PatientID from DICOM if not provided
-                        if patient_id == "01":
-                            try:
-                                with zipfile.ZipFile(zip_path, 'r') as zf:
-                                    # Get first DICOM file in archive
-                                    dicom_files = [f for f in zf.namelist() if f.lower().endswith('.dcm')]
-                                    if dicom_files:
-                                        with zf.open(dicom_files[0]) as dcm_file:
-                                            # Read just the PatientID tag (0010,0020)
-                                            dcm_file.seek(0)
-                                            content = dcm_file.read(4096)  # Read first 4KB which should contain header
-                                            if b'\x10\x00\x20\x00' in content:  # (0010,0020) tag
-                                                start = content.index(b'\x10\x00\x20\x00') + 4
-                                                end = content.index(b'\x00', start)
-                                                extracted_id = content[start:end].decode('ascii').strip()
-                                                if extracted_id:
-                                                    st.session_state.patient_id = extracted_id
-                                                    st.experimental_set_query_params(patient_id=extracted_id, orthanc_id=orthanc_id)
-                                                    st.rerun()
-                            except Exception as e:
-                                st.warning(f"Couldn't extract PatientID from DICOM: {str(e)}")
+        if st.button("🚀 Process Directly from Orthanc", type="primary"):
+            with st.spinner("Downloading DICOM data from Orthanc..."):
+                zip_path = download_orthanc_zip_direct(orthanc_id)
+                if zip_path:
+                    st.session_state.dicom_zip_path = str(zip_path)
+                    
+                    # Try to extract PatientID from DICOM if not provided
+                    if patient_id == "01":
+                        try:
+                            with zipfile.ZipFile(zip_path, 'r') as zf:
+                                # Get first DICOM file in archive
+                                dicom_files = [f for f in zf.namelist() if f.lower().endswith('.dcm')]
+                                if dicom_files:
+                                    with zf.open(dicom_files[0]) as dcm_file:
+                                        # Read just the PatientID tag (0010,0020)
+                                        dcm_file.seek(0)
+                                        content = dcm_file.read(4096)  # Read first 4KB which should contain header
+                                        if b'\x10\x00\x20\x00' in content:  # (0010,0020) tag
+                                            start = content.index(b'\x10\x00\x20\x00') + 4
+                                            end = content.index(b'\x00', start)
+                                            extracted_id = content[start:end].decode('ascii').strip()
+                                            if extracted_id:
+                                                st.session_state.patient_id = extracted_id
+                                                st.experimental_set_query_params(patient_id=extracted_id, orthanc_id=orthanc_id)
+                                                st.rerun()
+                        except Exception as e:
+                            st.warning(f"Couldn't extract PatientID from DICOM: {str(e)}")
     
     # Processing options section
     st.divider()
@@ -569,31 +511,8 @@ def main():
                 help="More memory allows processing larger datasets"
             )
     
-    # DICOM upload section
-    st.divider()
-    st.subheader("Data Upload")
-    dicom_zip = st.file_uploader("Upload DICOM ZIP", type=["zip"])
-    
-    # Only show processing options when DICOM is ready
-    if "current_job" in st.session_state:
-        # We have a job from Orthanc
-        job = st.session_state["current_job"]
-        temp_dir = Path(job["temp_dir"])
-        
-        if st.button("Start MRIQC Analysis", type="primary"):
-            with st.spinner("Processing..."):
-                try:
-                    # Extract DICOMs
-                    dicom_dir = temp_dir / "dicoms"
-                    dicom_dir.mkdir(exist_ok=True)
-                    with zipfile.ZipFile(temp_dir / "dicom.zip", 'r') as zf:
-                        zf.extractall(dicom_dir)
-                    st.success("DICOMs extracted successfully")
-                except Exception as e:
-                    st.error(f"Error extracting DICOMs: {str(e)}")
-
     # DICOM to BIDS conversion
-    if dicom_zip or "dicom_zip_path" in st.session_state:
+    if "dicom_zip_path" in st.session_state:
         st.divider()
         st.subheader("DICOM Conversion")
         
@@ -608,14 +527,10 @@ def main():
                     dicom_dir = temp_dir / "dicoms"
                     dicom_dir.mkdir(exist_ok=True)
                     
-                    # Handle either uploaded file or Orthanc downloaded file
-                    if dicom_zip:
-                        with zipfile.ZipFile(dicom_zip, 'r') as zf:
-                            zf.extractall(dicom_dir)
-                    elif "dicom_zip_path" in st.session_state:
-                        with zipfile.ZipFile(st.session_state.dicom_zip_path, 'r') as zf:
-                            zf.extractall(dicom_dir)
-                            
+                    # Handle Orthanc downloaded file
+                    with zipfile.ZipFile(st.session_state.dicom_zip_path, 'r') as zf:
+                        zf.extractall(dicom_dir)
+                        
                     st.success(f"DICOMs extracted to {dicom_dir}")
 
                     # Convert to BIDS
@@ -770,7 +685,6 @@ def main():
             except Exception as e:
                 st.error(f"Processing error: {str(e)}")
                 st.exception(e)
-
 
 if __name__ == "__main__":
     main()
