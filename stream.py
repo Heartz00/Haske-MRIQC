@@ -117,7 +117,7 @@ def download_orthanc_zip_direct(orthanc_id):
         ORTHANC_URL = "https://haske.online:5000"
         zip_url = f"{ORTHANC_URL}/studies/{orthanc_id}/archive"
         
-        st.write(f"Downloading DICOM archive from: {zip_url}")
+        st.write(f"Downloading DICOM archive...........")
         response = requests.get(
             zip_url,
             stream=True,
@@ -406,7 +406,7 @@ def create_bids_top_level_files(bids_dir: Path, subject_id: str):
             "Name": "Example dataset",
             "BIDSVersion": "1.6.0",
             "License": "CC0",
-            "Authors": ["Philip Nkwam","Udunna Anazodo", "Maruf Adewole", "Sekinat Aderibigbe"],
+            "Authors": ["Philip Nkwam","Ayomide Oladele", "Udunna Anazodo", "Maruf Adewole", "Sekinat Aderibigbe"],
             "DatasetType": "raw"
         }
         with open(dd_file, 'w') as f:
@@ -505,14 +505,14 @@ def main():
         
         # Add Orthanc ID field if present
         if orthanc_id:
-            st.info(f"Processing study from Orthanc ID: {orthanc_id}")
+            st.info(f"Processing study from Haske")
             
         st.form_submit_button("Update Subject Info")
     
     # Orthanc processing section
     if orthanc_id:
-            if st.button("🚀 Process Directly from Orthanc", type="primary"):
-                with st.spinner("Downloading DICOM data from Orthanc..."):
+            if st.button("🚀 Process Directly from Haske", type="primary"):
+                with st.spinner("Downloading DICOM data from Haske..."):
                     zip_path = download_orthanc_zip_direct(orthanc_id)
                     if zip_path:
                         st.session_state.dicom_zip_path = str(zip_path)
