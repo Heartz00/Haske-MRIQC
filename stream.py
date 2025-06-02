@@ -664,7 +664,7 @@ def main():
                     with open(bids_zip_path, 'rb') as f:
                         files = {'bids_zip': ('bids_dataset.zip', f, 'application/zip')}
                         metadata = {
-                            'participant_Orthanclabel': subj_id,
+                            'participant_label': subj_id,
                             'modalities': modalities_str,
                             'session_id': ses_id or "baseline",
                             'n_procs': str(n_procs),
