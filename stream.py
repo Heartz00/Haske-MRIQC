@@ -1,6 +1,7 @@
 import pandas as pd
 from bs4 import BeautifulSoup
 import streamlit as st
+import zipfile
 import uuid
 import shutil
 import subprocess
@@ -11,7 +12,27 @@ import json
 import datetime
 import time
 from io import BytesIO
-import zipfile
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Dict, Any
+from urllib.parse import urlencode
+
+
+backend_app = FastAPI()
+
+# Enable CORS
+backend_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Dictionary to track processing jobs
+processing_jobs: Dict[str, Dict[str, Any]] = {}
+
+
 
 # ------------------------------
 # Streamlit Page Configuration
