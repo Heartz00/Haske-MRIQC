@@ -163,7 +163,7 @@ def generate_dcm2bids_config(temp_dir: Path) -> Path:
             {
                 "datatype": "anat",
                 "suffix": "T2w",
-                "criteria": {
+                "criteria": { 
                     "SeriesDescription": "*T2*",
                     "ImageType": ["ORIGINAL", "(?i).*(PRIMARY|PERMANY).*"]
                 },
