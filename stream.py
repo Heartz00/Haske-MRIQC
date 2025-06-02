@@ -260,6 +260,36 @@ def run_dcm2bids(dicom_dir: Path, bids_out: Path, subj_id: str, ses_id: str, con
         st.error(f"dcm2bids error:\n{result.stderr}")
     else:
         st.success("dcm2bids completed successfully.")
+def classify_from_metadata(meta):
+    """
+    Classifies based on metadata if and only if ImageType includes 'ORIGINAL'.
+    """
+    image_type = meta.get("ImageType", [])
+    if isinstance(image_type, str):
+        image_type = [image_type]
+
+    if not any("original" in t.lower() for t in image_type):
+        return None, None  # Skip derived images
+
+    desc = (meta.get("SeriesDescription", "") + " " +
+            meta.get("ProtocolName", "")).lower()
+    pulse = meta.get("PulseSequenceName", "").lower()
+
+    if "t1" in desc and "flair" not in desc:
+        return "anat", "T1w"
+    elif "t2" in desc:
+        return "anat", "T2w"
+    elif "flair" in desc or "fluid" in desc:
+        return "anat", "FLAIR"
+    elif "dwi" in desc or "dti" in desc:
+        return "dwi", "dwi"
+    elif "bold" in desc or "fmri" in desc or "functional" in desc or "activation" in desc or "epi" in pulse:
+        return "func", "bold"
+    elif "asl" in desc or "perfusion" in desc:
+        return "perf", "asl"
+    else:
+        return None, None
+
 
 def classify_and_move_original_files(bids_out: Path, subj_id: str, ses_id: str):
     tmp_folder = bids_out / "tmp_dcm2bids" / f"sub-{subj_id}_ses-{ses_id}"
@@ -447,7 +477,7 @@ def main():
         
         # Add Orthanc ID field if present
         if orthanc_id:
-            st.info(f"Processing study from Orthanc ID: {orthanc_id}")
+            st.info(f"Processing study from Haske ID: {orthanc_id}")
             
         st.form_submit_button("Update Subject Info")
     
