@@ -569,9 +569,6 @@ def main():
                 help="More memory allows processing larger datasets"
             )
     
-    # DICOM upload section
-    st.divider()
-    
     # Only show processing options when DICOM is ready
     if "current_job" in st.session_state:
         # We have a job from Orthanc
