@@ -431,7 +431,7 @@ def extract_all_iqms(result_dir: Path):
 API_BASE = "http://52.91.185.103:8000"
 
 def main():
-    st.title("MRI Quality Control")
+    st.title("MRI Quality Control Check")
     query_params = st.query_params
     patient_id = query_params.get("patient_id", ["01"])[0]
     orthanc_id = query_params.get("orthanc_id", [None])[0]
