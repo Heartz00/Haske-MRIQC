@@ -114,7 +114,7 @@ with st.sidebar:
 def download_orthanc_zip_direct(orthanc_id):
     """Download DICOM ZIP directly from Orthanc"""
     try:
-        ORTHANC_URL = "https://haske.online:5000"
+        ORTHANC_URL = "https://secure.haske.online"
         zip_url = f"{ORTHANC_URL}/studies/{orthanc_id}/archive"
         
         st.write(f"Downloading DICOM archive...........")
