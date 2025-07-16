@@ -672,7 +672,8 @@ def main():
                         submit_response = requests.post(
                             f"{API_BASE}/submit-job", 
                             files=files, 
-                            data=metadata
+                            data=metadata,
+                            timeout=30  
                         )
 
                     if submit_response.status_code != 200:
