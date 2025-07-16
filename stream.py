@@ -673,7 +673,7 @@ def main():
                             f"{API_BASE}/submit-job", 
                             files=files, 
                             data=metadata,
-                            timeout=30  
+                            timeout=(30, 3600)
                         )
 
                     if submit_response.status_code != 200:
