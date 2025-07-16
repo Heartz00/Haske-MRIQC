@@ -669,11 +669,17 @@ def main():
                         }
 
                         status.write("Uploading BIDS data...")
+                        # Change the API calls to match the new endpoints
                         submit_response = requests.post(
                             f"{API_BASE}/submit-job", 
-                            files=files, 
-                            data=metadata,
-                            timeout=(30, 3600)
+                            files={'bids_zip': ('bids_dataset.zip', open(bids_zip_path, 'rb'), 'application/zip')},
+                            data={
+                                'participant_label': subj_id,
+                                'modalities': modalities_str,
+                                'session_id': ses_id or "",
+                                'n_procs': str(n_procs),
+                                'mem_gb': str(mem_gb)
+                            }
                         )
 
                     if submit_response.status_code != 200:
