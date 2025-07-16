@@ -486,7 +486,7 @@ def extract_all_iqms(result_dir: Path):
 # ------------------------------
 
 # Constants
-API_BASE = "http://52.91.185.103:8000"
+API_BASE = "https://mriqc.haske.online/"
 
 def main():
     st.title("MRI Quality Control Check")
